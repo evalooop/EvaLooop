@@ -74,15 +74,6 @@ logs/*
 *.model
 *.pb
 
-# Experiment tracking
-experiments/*
-!experiments/.gitkeep
-
-# Ignore config files containing credentials
-config/*
-!config/.gitkeep
-!config/example.yaml
-
 # Editor directories and files
 .idea/
 .vscode/

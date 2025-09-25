@@ -1,0 +1,29 @@
+# Open-source models
+llama-3-70b:
+  name: llama-3-70b
+  type: huggingface
+  path: meta-llama/Llama-3-70b-instruct-hf
+  device: cuda
+  max_length: 4096
+
+deepseek-coder:
+  name: deepseek-coder
+  type: huggingface
+  path: deepseek-ai/deepseek-coder-33b-instruct
+  device: cuda
+  max_length: 4096
+
+# Closed-source models
+gpt-4o:
+  name: gpt-4o
+  type: openai
+  model_id: gpt-4o
+  api_key: ${OPENAI_API_KEY}
+  max_tokens: 4096
+
+gpt-3-5-turbo:
+  name: gpt-3-5-turbo
+  type: openai
+  model_id: gpt-3.5-turbo
+  api_key: ${OPENAI_API_KEY}
+  max_tokens: 4096

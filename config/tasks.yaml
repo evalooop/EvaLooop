@@ -1,0 +1,59 @@
+# Code Generation Tasks
+python_generation:
+  type: code_generation
+  language: python
+  prompt_template: |
+    Generate Python code for the following task:
+
+    {description}
+
+    Return only the code, without explanations or comments.
+
+java_generation:
+  type: code_generation
+  language: java
+  prompt_template: |
+    Generate Java code for the following task:
+
+    {description}
+    
+    Return only the code, without explanations or comments.
+
+# Code Summarization Tasks
+code_summarization:
+  type: code_summarization
+  prompt_template: |
+    Summarize what the following code does in a detailed description:
+    
+    ```
+    {code}
+    ```
+    
+    Return only the summary, without explanations or comments.
+
+# Code Translation Tasks
+python_to_java:
+  type: code_translation
+  source_language: python
+  target_language: java
+  prompt_template: |
+    Translate the following Python code to Java:
+    
+    ```
+    {code}
+    ```
+    
+    Return only the Java code, without explanations or comments.
+
+java_to_python:
+  type: code_translation
+  source_language: java
+  target_language: python
+  prompt_template: |
+    Translate the following Java code to Python:
+    
+    ```
+    {code}
+    ```
+    
+    Return only the Python code, without explanations or comments.

@@ -1,0 +1,43 @@
+name: code_generation_summarization
+description: "Evaluate LLM robustness with code generation and summarization cycles"
+
+openai_base: &openai_base
+  type: openai
+  api_key: ${OPENAI_API_KEY}
+  max_tokens: 4096
+  temperature: 0.0  # Set for greedy decoding
+  top_p: 1.0  # Set for greedy decoding
+  
+models:
+  - name: Qwen3-235B-A22B-Instruct-2507
+    type: vllm
+    path: Qwen/Qwen3-235B-A22B-Instruct-2507
+    device: cuda
+    gpu_id: [0, 1, 2, 3, 4, 5, 6, 7]
+    max_length: 2048
+    tensor_parallel_size: 8  # 235B model requires all 8 GPUs
+    gpu_memory_utilization: 0.85
+    max_model_len: 4096
+    trust_remote_code: true
+  
+  - name: GPT-4.5-preview
+    model_id: gpt-4.5-preview-2025-02-27
+    <<: *openai_base
+
+tasks:
+  - type: code_generation
+    language: python
+    prompt_template: "Generate Python code for the following task: \n{description}\nReturn only the code, without explanations or comments."
+  
+  - type: code_summarization
+    prompt_template: "Use one sentence to summarize the following code and start with write a python function to:\n\n```\n{code}\n```\n\n```\nwrite a python function to\n```"
+
+max_cycles: 10
+test_cases_dir: "data/test_cases/python"
+
+prompts:
+  - "Write a function that calculates the Fibonacci sequence up to n terms."
+  - "Create a function to check if a string is a palindrome."
+  - "Implement a function to find the prime factors of a number."
+  - "Write a program to solve the Tower of Hanoi puzzle."
+  - "Implement a binary search algorithm."
