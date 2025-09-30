@@ -1,0 +1,42 @@
+# Include the README and license files
+include README.md
+include LICENSE
+include requirements.txt
+
+# Include configuration files
+recursive-include evaloop/config *.yaml *.yml *.json
+
+# Include data files
+recursive-include evaloop/data *.json *.jsonl *.txt *.csv
+
+# Include test data
+recursive-include tests/data *.json *.jsonl *.txt *.csv
+
+# Exclude development and build files
+exclude .cursorrules
+exclude .gitignore
+exclude *.pyc
+exclude *.pyo
+exclude *.pyd
+exclude __pycache__
+exclude .pytest_cache
+exclude .mypy_cache
+exclude .coverage
+exclude htmlcov
+exclude build
+exclude dist
+exclude *.egg-info
+
+# Exclude original source structure
+exclude src
+recursive-exclude src *
+
+# Exclude scripts that are now replaced by CLI
+exclude scripts
+recursive-exclude scripts *
+
+# Exclude experiments and config directories (now part of examples)
+exclude experiments
+exclude config
+recursive-exclude experiments *
+recursive-exclude config *
