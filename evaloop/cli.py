@@ -159,6 +159,10 @@ class EvaLoopCLI:
                 gpu_id_list = [int(gpu) for gpu in gpu_ids]
             else:
                 gpu_id_list = [int(gpu_ids)]  # Single GPU ID
+        
+        # If length of gpu_id_list is larger than 1, set tensor_parallel_size to the length of gpu_id_list
+        if len(gpu_id_list) > 1:
+            tensor_parallel_size = len(gpu_id_list)
 
         # Setup API key
         if openai_api_key:

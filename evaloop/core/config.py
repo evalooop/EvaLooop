@@ -128,17 +128,19 @@ class EvaluationConfig:
     
     def _create_model_config(self, model: str) -> Dict[str, Any]:
         """Create configuration for a specific model."""
+        model_lower = model.lower()
+
         # Determine model type based on model name/path
-        if any(provider in model.lower() for provider in ["gpt", "chatgpt", "openai"]):
-            model_type = "openai"
-        elif "claude" in model.lower():
-            model_type = "anthropic"
-        elif "/" in model or self._is_huggingface_model(model):
+        if "/" in model or self._is_huggingface_model(model):
             # Check if model is supported by VLLM
             if self._is_vllm_supported(model):
                 model_type = "vllm"
             else:
                 model_type = "huggingface"
+        elif "claude" in model_lower:
+            model_type = "anthropic"
+        elif any(provider in model_lower for provider in ["gpt", "chatgpt", "openai"]):
+            model_type = "openai"
         else:
             # Assume it's a Hugging Face model name
             model_type = "huggingface"
@@ -195,6 +197,7 @@ class EvaluationConfig:
             base_config.update({
                 "path": model,
                 "device": "cuda" if self.gpu_ids else "auto",
+                "gpu_ids": self.gpu_ids,
                 "max_length": self.max_model_len,
                 "trust_remote_code": self.trust_remote_code,
                 "max_new_tokens": self.max_new_tokens,

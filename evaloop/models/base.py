@@ -10,7 +10,7 @@ class BaseLLM(ABC):
         self.model_name = model_config.get("name", "unnamed_model")
         
     @abstractmethod
-    async def generate(self, prompt: str, **kwargs) -> str:
+    def generate(self, prompt: str, **kwargs) -> str:
         """Generate text based on input prompt."""
         pass
     
