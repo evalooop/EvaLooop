@@ -4,14 +4,14 @@ Fire-based CLI interface for EvaLoop evaluation framework.
 """
 
 import os
-import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 
 import fire
 
-from .core.evaluator import EvaLoopEvaluator
-from .core.config import EvaluationConfig
+# The evaluator stack (torch, evalplus, ...) is imported lazily inside
+# evaluate() so that --help, list_models, and validate_setup work even
+# before the heavy dependencies are installed.
 from .utils.logging_utils import setup_logging
 from .utils.validation import SystemValidator
 from .models.registry import ModelRegistry
@@ -53,7 +53,7 @@ class EvaLoopCLI:
     Environment Setup:
         export OPENAI_API_KEY="your-api-key"  # For OpenAI models
         
-    More information: https://github.com/your-org/evaloop
+    More information: https://github.com/evalooop/EvaLooop
     """
 
     def __init__(self):
@@ -99,7 +99,7 @@ class EvaLoopCLI:
         Args:
             model: Single model name/path to evaluate.
                    Examples: "gpt-4", "Qwen/Qwen2.5-Coder-32B-Instruct"
-            dataset: Dataset to use for evaluation. Supported: "mbpp_plus", "humaneval"
+            dataset: Dataset to use for evaluation. Currently only "mbpp_plus" is supported.
             max_cycles: Maximum number of evaluation cycles to run.
             temperature: Temperature for model generation (0.0 for greedy decoding).
             top_p: Top-p (nucleus) sampling parameter.
@@ -142,6 +142,14 @@ class EvaLoopCLI:
                              --experiment_name "deepseek_robust_test"
         """
         
+        if dataset != "mbpp_plus":
+            raise ValueError(
+                f"Unsupported dataset: '{dataset}'. Only 'mbpp_plus' is currently supported."
+            )
+
+        from .core.config import EvaluationConfig
+        from .core.evaluator import EvaLoopEvaluator
+
         # Setup logging
         self.logger = setup_logging(level=log_level)
         self.logger.info("Starting EvaLoop evaluation experiment")
@@ -264,7 +272,7 @@ class EvaLoopCLI:
         """
         List all available pre-configured models.
         
-        Shows all models that can be used with the --models parameter.
+        Shows all models that can be used with the --model parameter.
         Includes both model names and full HuggingFace paths.
         
         Usage:
