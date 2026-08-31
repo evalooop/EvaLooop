@@ -4,7 +4,6 @@ Fire-based CLI interface for EvaLoop evaluation framework.
 """
 
 import os
-import logging
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 

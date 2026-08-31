@@ -1,13 +1,13 @@
 import os
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig, BitsAndBytesConfig
-from typing import Dict, Any, Optional, List, Union, Literal
+from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass
 import random
 import numpy as np
 
 try:
-    import bitsandbytes as bnb
+    import bitsandbytes as bnb  # noqa: F401 - availability probe
     HAS_BNB = True
 except ImportError:
     HAS_BNB = False
@@ -355,7 +355,6 @@ class HuggingFaceLLM(BaseLLM):
         generation_config = self._get_generation_config(strategy)
 
         with torch.no_grad():
-            # print(f"generating with prompt:\n===\n{prompt}\n===")
             
             if self.is_chat_model:
                 # For chat models, we track the new tokens separately

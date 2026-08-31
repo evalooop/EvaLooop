@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 class BaseLLM(ABC):
     """Base class for all LLM implementations."""
