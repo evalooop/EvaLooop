@@ -8,7 +8,6 @@ from pathlib import Path
 from .config import EvaluationConfig
 from ..models.factory import ModelFactory
 from ..tasks.factory import TaskFactory
-from ..tasks.code_generation import CodeGenerationTask
 from ..evaluation.cycle import BatchEvaluationCycle
 from ..evaluation.py_testing import EvalPlusCodeTester, load_mbpp_dataset
 
@@ -209,8 +208,9 @@ class EvaLoopEvaluator:
         return test_results.get("success", False)
     
     def _find_code_generation_task_index(self, tasks) -> int:
-        """Find the index of the code generation task."""
-        return next((i for i, task in enumerate(tasks) if isinstance(task, CodeGenerationTask)), None)
+        """Find the index of the task whose output should be functionally tested."""
+        return next((i for i, task in enumerate(tasks)
+                     if getattr(task, "produces_testable_code", False)), None)
     
     def _prepare_next_cycle_prompt(self, cycle_result, tasks, task_id) -> Dict[str, Any]:
         """Prepare prompt for the next cycle."""
