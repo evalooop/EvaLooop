@@ -1,7 +1,6 @@
 """System validation utilities for EvaLoop."""
 
 import os
-import torch
 import logging
 from typing import Dict, Any
 
@@ -77,7 +76,8 @@ class SystemValidator:
             "evalplus",
             "pandas",
             "matplotlib",
-            "seaborn"
+            "seaborn",
+            "tqdm"
         ]
         
         missing_packages = []
@@ -106,6 +106,8 @@ class SystemValidator:
     def _check_gpu_availability(self) -> Dict[str, Any]:
         """Check GPU availability."""
         try:
+            import torch
+
             gpu_available = torch.cuda.is_available()
             gpu_count = torch.cuda.device_count() if gpu_available else 0
             
@@ -122,6 +124,13 @@ class SystemValidator:
                 "count": gpu_count,
                 "names": gpu_names
             }
+        except ImportError:
+            return {
+                "passed": False,
+                "message": "torch not installed - cannot check GPU",
+                "count": 0,
+                "names": []
+            }
         except Exception as e:
             return {
                 "passed": False,
@@ -133,6 +142,8 @@ class SystemValidator:
     def _check_cuda_version(self) -> Dict[str, Any]:
         """Check CUDA version."""
         try:
+            import torch
+
             if torch.cuda.is_available():
                 cuda_version = torch.version.cuda
                 message = f"CUDA {cuda_version}"
@@ -146,6 +157,12 @@ class SystemValidator:
                 "passed": passed,
                 "message": message,
                 "version": cuda_version
+            }
+        except ImportError:
+            return {
+                "passed": False,
+                "message": "torch not installed - cannot check CUDA",
+                "version": None
             }
         except Exception as e:
             return {
