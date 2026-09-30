@@ -251,7 +251,7 @@ class EvaLoopCLI:
             generate_plots: Whether to generate visualization plots.
             output_dir: Directory to save analysis (defaults to results directory).
             max_cycles: Loop budget M of the experiment (defaults to the value recorded in the
-                results file, then 10).
+                results file, then the value implied by tasks flagged max_cycles_reached, then 10).
             judge_model: Model id of the similarity judge.
             judge_api_key: API key of the judge endpoint (defaults to OPENAI_API_KEY).
             judge_api_key_file: File containing the judge API key (alternative to judge_api_key).

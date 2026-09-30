@@ -9,14 +9,18 @@ transition with the failing one:
   failing code generated in loop ``i + 1``.
 
 The judge answers with a score in ``[0, 1]``. Scores are cached in a JSON sidecar next to the
-results file (``{"<task_id>_cycle_<i>": score}``, the format of the published archive), so an
-analysis only queries the judge for pairs that have not been scored yet.
+results file, ``{"<task_id>_cycle_<i>": {"score": ..., "input_sha256": ...}}``, so an analysis only
+queries the judge for pairs that have not been scored yet. The hash covers the rendered judge
+prompt, so a cached score is re-judged when the results or the prompt template changed. Sidecars
+of the published archive (``{"<task_id>_cycle_<i>": score}``, no hash) are still accepted; their
+entries cannot be verified and are used as is.
 
 The judge is any :class:`~evaloop.models.base.BaseLLM`. By default it is built from a
 :class:`JudgeConfig` through :class:`~evaloop.models.closed_source.OpenAILLM`, so every
 OpenAI-compatible endpoint (OpenAI, a local ``vllm serve`` server, hosted gateways) can serve it.
 """
 
+import hashlib
 import json
 import logging
 import math
@@ -173,6 +177,30 @@ def extract_boundary_pair(prompt_result: Mapping[str, Any], max_cycles: int) -> 
     )
 
 
+def render_judge_prompt(template: str, pair: BoundaryPair) -> str:
+    """Fills a judge prompt template with the four strings of a boundary pair."""
+    return template.format(prompt1=pair.prompt1, code1=pair.code1, prompt2=pair.prompt2, code2=pair.code2)
+
+
+def judge_input_sha256(template: str, pair: BoundaryPair) -> str:
+    """Fingerprints the exact judge input of a pair, used to validate cached scores."""
+    return hashlib.sha256(render_judge_prompt(template, pair).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class CachedScore:
+    """One sidecar entry.
+
+    Attributes:
+        score: Judge score in ``[0, 1]``, or ``None`` if the judge call failed.
+        input_sha256: :func:`judge_input_sha256` of the judged input; ``None`` for entries of
+            legacy archive sidecars, which cannot be verified.
+    """
+
+    score: Optional[float]
+    input_sha256: Optional[str]
+
+
 @dataclass
 class JudgeConfig:
     """User-facing configuration of the similarity judge.
@@ -180,7 +208,8 @@ class JudgeConfig:
     Attributes:
         model: Model id sent to the endpoint.
         api_key: API key; falls back to the ``OPENAI_API_KEY`` environment variable.
-        base_url: OpenAI-compatible endpoint; ``None`` uses ``OPENAI_BASE_URL`` or OpenAI itself.
+        base_url: OpenAI-compatible endpoint; falls back to the ``OPENAI_BASE_URL`` environment
+            variable, then to OpenAI itself.
         temperature: Sampling temperature (0.0 = greedy, as in the paper).
         max_tokens: Token budget of the answer. Reasoning models need a much larger budget.
         system_prompt: Optional system message; the paper's judge sends none.
@@ -220,8 +249,11 @@ class JudgeConfig:
             ValueError: If no API key is available for the official OpenAI endpoint.
         """
         api_key = self.api_key or os.environ.get("OPENAI_API_KEY")
+        # Resolve the endpoint the same way the OpenAI client does, so an endpoint configured via
+        # OPENAI_BASE_URL counts as self-hosted too.
+        base_url = self.base_url or os.environ.get("OPENAI_BASE_URL")
         if not api_key:
-            if self.base_url is None:
+            if not base_url:
                 raise ValueError(
                     "No API key for the similarity judge: pass --judge_api_key or --judge_api_key_file, "
                     "set OPENAI_API_KEY, or reuse an existing similarity sidecar via --similarity_path"
@@ -232,7 +264,7 @@ class JudgeConfig:
             "type": "openai",
             "model_id": self.model,
             "api_key": api_key,
-            "base_url": self.base_url,
+            "base_url": base_url,
             "temperature": self.temperature,
             "top_p": 1.0,
             "max_tokens": self.max_tokens,
@@ -283,9 +315,7 @@ class SemanticSimilarityJudge:
 
     def build_prompt(self, pair: BoundaryPair) -> str:
         """Renders the judge prompt for a boundary pair."""
-        return self.prompt_template.format(
-            prompt1=pair.prompt1, code1=pair.code1, prompt2=pair.prompt2, code2=pair.code2
-        )
+        return render_judge_prompt(self.prompt_template, pair)
 
     def score(self, pair: BoundaryPair) -> Optional[float]:
         """Scores one boundary pair.
@@ -326,18 +356,18 @@ def default_similarity_path(results_path: Path, judge_name: str, model_name: Opt
     return results_path.with_name("_".join(parts) + ".json")
 
 
-def load_similarity_scores(path: Path) -> Dict[str, Optional[float]]:
+def load_similarity_scores(path: Path) -> Dict[str, CachedScore]:
     """Loads a similarity sidecar.
 
     Args:
         path: Sidecar path.
 
     Returns:
-        Scores keyed by boundary-pair key; ``None`` marks a failed judgement. Empty if the file
-        does not exist.
+        Entries keyed by boundary-pair key. Empty if the file does not exist.
 
     Raises:
-        ValueError: If the file is not a flat mapping of keys to numbers or null.
+        ValueError: If an entry is neither ``{"score": ..., "input_sha256": ...}`` nor a bare
+            number or null (legacy archive format).
     """
     if not path.exists():
         return {}
@@ -345,25 +375,32 @@ def load_similarity_scores(path: Path) -> Dict[str, Optional[float]]:
         data = json.load(sidecar)
     if not isinstance(data, dict):
         raise ValueError(f"{path} is not a similarity sidecar (expected a JSON object)")
-    scores: Dict[str, Optional[float]] = {}
+    entries: Dict[str, CachedScore] = {}
     for key, value in data.items():
+        input_sha256 = None
+        if isinstance(value, dict):
+            input_sha256 = value.get("input_sha256")
+            value = value.get("score")
+            if input_sha256 is not None and not isinstance(input_sha256, str):
+                raise ValueError(f"{path}: input_sha256 of {key!r} must be a string, got {input_sha256!r}")
         if value is not None and not isinstance(value, (int, float)):
             raise ValueError(f"{path}: score of {key!r} must be a number or null, got {value!r}")
-        scores[key] = None if value is None else float(value)
-    return scores
+        entries[key] = CachedScore(None if value is None else float(value), input_sha256)
+    return entries
 
 
-def save_similarity_scores(path: Path, scores: Mapping[str, Optional[float]]) -> None:
+def save_similarity_scores(path: Path, entries: Mapping[str, CachedScore]) -> None:
     """Writes a similarity sidecar atomically.
 
     Args:
         path: Sidecar path.
-        scores: Scores keyed by boundary-pair key.
+        entries: Entries keyed by boundary-pair key.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    data = {key: {"score": entry.score, "input_sha256": entry.input_sha256} for key, entry in entries.items()}
     tmp_path = path.with_name(path.name + ".tmp")
     with open(tmp_path, "w", encoding="utf-8") as sidecar:
-        json.dump(dict(scores), sidecar, indent=2)
+        json.dump(data, sidecar, indent=2)
     os.replace(tmp_path, path)
 
 
@@ -371,43 +408,69 @@ def collect_similarity_scores(
     pairs: Sequence[BoundaryPair],
     cache_path: Path,
     judge_provider: Optional[Callable[[], SemanticSimilarityJudge]],
+    prompt_template: str = DEFAULT_JUDGE_PROMPT,
     rejudge_failed: bool = True,
 ) -> Dict[str, Optional[float]]:
-    """Returns the similarity score of every pair, querying the judge only for uncached pairs.
+    """Returns the similarity score of every pair, querying the judge only when needed.
 
-    The sidecar is rewritten after every judge call, so an interrupted run resumes where it
-    stopped.
+    A pair is (re-)judged if it is missing from the sidecar, if its cached entry was computed for
+    a different judge input (the results or the prompt template changed since), or, with
+    ``rejudge_failed``, if its cached judge call failed. The sidecar is rewritten after every judge
+    call, so an interrupted run resumes where it stopped.
 
     Args:
         pairs: Boundary pairs to score.
         cache_path: Sidecar path used as cache.
-        judge_provider: Returns the judge; only called if a pair still needs scoring, so no API
-            key is required when the cache is complete. ``None`` forbids judge calls.
+        judge_provider: Returns the judge; only called if a pair needs scoring, so no API key is
+            required when the cache is complete and valid. ``None`` forbids judge calls.
+        prompt_template: Prompt template of the judge, used to validate cached entries.
         rejudge_failed: Whether to query the judge again for pairs cached as failed (``None``).
 
     Returns:
         Scores keyed by pair key (``None`` for failed judgements), in the order of ``pairs``.
 
     Raises:
-        ValueError: If pairs need scoring but no judge is available.
+        ValueError: If pairs need scoring but no judge is available, or the judge uses a
+            different prompt template than ``prompt_template``.
     """
     cache = load_similarity_scores(cache_path)
+    input_hashes = {pair.key: judge_input_sha256(prompt_template, pair) for pair in pairs}
+
+    stale = [
+        pair.key for pair in pairs
+        if pair.key in cache and cache[pair.key].input_sha256 not in (None, input_hashes[pair.key])
+    ]
+    if stale:
+        logger.warning(
+            "%d cached scores in %s were computed for different judge inputs (the results or the judge "
+            "prompt changed) and will be re-judged: %s%s",
+            len(stale), cache_path, stale[:5], " ..." if len(stale) > 5 else "",
+        )
+    stale_keys = set(stale)
+    unverified = sum(1 for pair in pairs if pair.key in cache and cache[pair.key].input_sha256 is None)
+    if unverified:
+        logger.info("%d cached scores in %s come from a legacy sidecar and cannot be verified", unverified, cache_path)
+
     pending = [
         pair for pair in pairs
-        if pair.key not in cache or (rejudge_failed and cache[pair.key] is None)
+        if pair.key not in cache
+        or pair.key in stale_keys
+        or (rejudge_failed and cache[pair.key].score is None)
     ]
     if pending:
         if judge_provider is None:
-            raise ValueError(f"{len(pending)} boundary pairs are not in {cache_path} and no judge is configured")
+            raise ValueError(f"{len(pending)} boundary pairs need scoring for {cache_path} and no judge is configured")
         judge = judge_provider()
+        if judge.prompt_template != prompt_template:
+            raise ValueError("The judge's prompt template differs from the template used to validate the cache")
         logger.info("Scoring %d boundary pairs with judge %s (cache: %s)", len(pending), judge.name, cache_path)
         for index, pair in enumerate(pending, start=1):
-            cache[pair.key] = judge.score(pair)
+            cache[pair.key] = CachedScore(judge.score(pair), input_hashes[pair.key])
             save_similarity_scores(cache_path, cache)
-            logger.info("[%d/%d] %s: %s", index, len(pending), pair.key, cache[pair.key])
+            logger.info("[%d/%d] %s: %s", index, len(pending), pair.key, cache[pair.key].score)
     else:
         logger.info("All %d boundary pairs are cached in %s", len(pairs), cache_path)
-    return {pair.key: cache.get(pair.key) for pair in pairs}
+    return {pair.key: cache[pair.key].score if pair.key in cache else None for pair in pairs}
 
 
 def group_scores_by_bucket(

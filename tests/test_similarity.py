@@ -1,5 +1,6 @@
 """Unit tests for evaloop.analysis.similarity."""
 
+import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -72,15 +73,30 @@ def test_judge_config_requires_api_key_for_openai_endpoint():
     assert local["system_prompt"] is None
 
 
+def test_judge_config_honours_base_url_from_environment(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://localhost:8000/v1")
+    config = JudgeConfig(model="local").to_model_config()
+    assert config["api_key"] == "EMPTY"
+    assert config["base_url"] == "http://localhost:8000/v1"
+
+
+def _pairs(count: int, code_suffix: str = ""):
+    """Boundary pairs of ``count`` tasks that failed in loop 2, optionally with altered failing code."""
+    pairs = [similarity.extract_boundary_pair(make_prompt_result(f"T{i}", 1, 3), 3) for i in range(count)]
+    return [dataclasses.replace(pair, code2=pair.code2 + code_suffix) for pair in pairs]
+
+
 def test_collect_similarity_scores_caches_and_retries_failures(tmp_path: Path):
-    pairs = [similarity.extract_boundary_pair(make_prompt_result(f"T{i}", 1, 3), 3) for i in range(3)]
+    pairs = _pairs(3)
     cache = tmp_path / "scores.json"
     llm = FakeLLM(responses=["0.9", "Error generating response: timeout", "0.4"])
     judge = SemanticSimilarityJudge(llm)
 
     scores = similarity.collect_similarity_scores(pairs, cache, lambda: judge)
     assert scores == {"T0_cycle_1": 0.9, "T1_cycle_1": None, "T2_cycle_1": 0.4}
-    assert json.loads(cache.read_text()) == scores
+    stored = json.loads(cache.read_text())
+    assert {key: entry["score"] for key, entry in stored.items()} == scores
+    assert stored["T0_cycle_1"]["input_sha256"] == similarity.judge_input_sha256(judge.prompt_template, pairs[0])
 
     # Only the failed pair is sent to the judge again.
     scores = similarity.collect_similarity_scores(pairs, cache, lambda: judge)
@@ -89,6 +105,33 @@ def test_collect_similarity_scores_caches_and_retries_failures(tmp_path: Path):
 
     # A complete cache needs no judge at all.
     assert similarity.collect_similarity_scores(pairs, cache, None) == scores
+
+
+def test_collect_similarity_scores_rejudges_entries_of_changed_inputs(tmp_path: Path):
+    cache = tmp_path / "scores.json"
+    llm = FakeLLM(default="0.9")
+    similarity.collect_similarity_scores(_pairs(2), cache, lambda: SemanticSimilarityJudge(llm))
+
+    # Same keys, different content (e.g. the results file was overwritten by a new run).
+    changed = _pairs(2, code_suffix="  # new run")
+    with pytest.raises(ValueError, match="need scoring"):
+        similarity.collect_similarity_scores(changed, cache, None)
+    llm.default = "0.2"
+    scores = similarity.collect_similarity_scores(changed, cache, lambda: SemanticSimilarityJudge(llm))
+    assert scores == {"T0_cycle_1": 0.2, "T1_cycle_1": 0.2}
+    assert len(llm.prompts) == 4
+
+    # A different prompt template invalidates the cache as well.
+    template = "Rate: {prompt1} {code1} {prompt2} {code2}"
+    judge = SemanticSimilarityJudge(llm, prompt_template=template)
+    similarity.collect_similarity_scores(changed, cache, lambda: judge, prompt_template=template)
+    assert len(llm.prompts) == 6
+
+
+def test_collect_similarity_scores_trusts_legacy_archive_entries(tmp_path: Path):
+    cache = tmp_path / "scores.json"
+    cache.write_text(json.dumps({"T0_cycle_1": 0.7, "T1_cycle_1": 0.0}))
+    assert similarity.collect_similarity_scores(_pairs(2), cache, None) == {"T0_cycle_1": 0.7, "T1_cycle_1": 0.0}
 
 
 def test_default_similarity_path_matches_archive_naming():

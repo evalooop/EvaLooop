@@ -147,7 +147,8 @@ evaloop analyze --results_path "results/experiment_results.json" [OPTIONS]
 - `--metrics`: Metrics to compute (default: `"ASL,ASL_pow,ASL_bias,pass@1,pass_drop"`, see [Scoring](#-scoring))
 - `--generate_plots`: Generate visualization plots (default: True)
 - `--output_dir`: Analysis output directory (default: `<results dir>/analysis`)
-- `--max_cycles`: Loop budget M of the run (default: value recorded in the results file, else 10)
+- `--max_cycles`: Loop budget M of the run (default: value recorded in the results file; for older
+  files, the value implied by tasks flagged `max_cycles_reached`; else 10 with a warning)
 
 **Similarity judge options** (only used by the `ASL` metric, and only for pairs not cached yet):
 - `--judge_model`: Judge model id (default: `gpt-4-turbo-2024-04-09`, the paper's judge)
@@ -337,10 +338,16 @@ those steps happen outside this package.
   `ResultAnalyzer`, or wrap any `BaseLLM` in `SemanticSimilarityJudge(llm)` and pass it as
   `judge=...`.
 - **Caching:** scores are stored in a sidecar next to the results file,
-  `<results stem>_<judge>_similarity_scores.json`, as `{"<task_id>_cycle_<i>": score}` (the format
-  of the published data archive). The judge is only called for pairs missing from the sidecar, so
-  reruns are free and an interrupted run resumes where it stopped. No API key is needed when the
-  sidecar is complete.
+  `<results stem>_<judge>_similarity_scores.json`, as
+  `{"<task_id>_cycle_<i>": {"score": ..., "input_sha256": ...}}`. The judge is only called for pairs
+  missing from the sidecar, so reruns are free and an interrupted run resumes where it stopped. No
+  API key is needed when the sidecar is complete.
+- **Cache validation:** `input_sha256` fingerprints the exact judge prompt (the four judged strings
+  rendered into the template). If a results file is overwritten (e.g. `evaluate` rerun with the same
+  `--experiment_name`) or the prompt template changes, mismatching entries are re-judged with a
+  warning instead of being mixed into the new run. Sidecars from the published data archive
+  (`{"<task_id>_cycle_<i>": score}`, no hash) are still accepted; their entries cannot be verified
+  and are used as is.
 - **Failures:** if the judge call fails or its answer cannot be parsed, the pair is stored as
   `null`, left out of its bucket mean (with a warning), and retried on the next run
   (`--rejudge_failed=False` keeps it as is). The original scripts recorded such failures as 0.0.

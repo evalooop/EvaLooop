@@ -64,7 +64,8 @@ class ResultAnalyzer:
                 ``<results stem>_<judge>_similarity_scores.json`` next to the results file.
                 Only allowed for single-model results files.
             max_cycles: Loop budget ``M`` of the experiment. Defaults to the ``max_cycles``
-                recorded in the results file, then to 10.
+                recorded in the results file, then to the value implied by tasks flagged
+                ``max_cycles_reached``, then to 10 (with a warning).
             rejudge_failed: Whether to query the judge again for pairs whose cached score is
                 null (a previous judge call failed).
         """
@@ -161,21 +162,56 @@ class ResultAnalyzer:
             self.logger.info(f"{model_name} {metric} = {value:.4f}")
 
     def _resolve_max_cycles(self, model_result: Dict[str, Any]) -> int:
-        """Return the loop budget ``M`` of a model run."""
-        recorded = model_result.get("max_cycles")
+        """Return the loop budget ``M`` of a model run.
+
+        Precedence: the ``max_cycles`` argument, the value recorded in the results file, the value
+        implied by tasks flagged ``max_cycles_reached`` (files written before ``max_cycles`` was
+        recorded), and finally ``DEFAULT_MAX_CYCLES`` with a warning.
+        """
+        model_name = model_result["model"]
+        known, source = model_result.get("max_cycles"), "recorded in the results"
+        if known is None:
+            known, source = self._infer_max_cycles(model_result), "implied by tasks flagged max_cycles_reached"
+
         if self.max_cycles is not None:
-            if recorded is not None and recorded != self.max_cycles:
+            if known is not None and known != self.max_cycles:
                 self.logger.warning(
-                    f"Results record max_cycles={recorded}, but max_cycles={self.max_cycles} was requested; "
-                    f"using {self.max_cycles}"
+                    f"{model_name}: max_cycles={known} is {source}, but max_cycles={self.max_cycles} was "
+                    f"requested; using {self.max_cycles}"
                 )
             return self.max_cycles
-        if recorded is not None:
-            return int(recorded)
-        self.logger.info(
-            f"Results do not record max_cycles; assuming {DEFAULT_MAX_CYCLES} (override with max_cycles)"
+        if known is not None:
+            if source != "recorded in the results":
+                self.logger.info(f"{model_name}: using max_cycles={known} {source}")
+            return int(known)
+        self.logger.warning(
+            f"{model_name}: the results record no max_cycles and no task survived the full run, so the loop "
+            f"budget cannot be recovered; ASSUMING max_cycles={DEFAULT_MAX_CYCLES}. Every metric is wrong if "
+            f"the run used a different budget; pass max_cycles explicitly."
         )
         return DEFAULT_MAX_CYCLES
+
+    @staticmethod
+    def _infer_max_cycles(model_result: Dict[str, Any]) -> Optional[int]:
+        """Recover ``M`` from tasks flagged ``max_cycles_reached``, which sustained exactly ``M`` loops.
+
+        Returns:
+            The loop budget, or None if no task survived the full run.
+
+        Raises:
+            ValueError: If the flagged tasks disagree on the loop budget.
+        """
+        full_runs = {
+            prompt_result["successful_cycles"]
+            for prompt_result in model_result["prompt_results"]
+            if prompt_result.get("max_cycles_reached")
+        }
+        if len(full_runs) > 1:
+            raise ValueError(
+                f"{model_result['model']}: tasks flagged max_cycles_reached disagree on the loop budget "
+                f"({sorted(full_runs)}); pass max_cycles explicitly"
+            )
+        return full_runs.pop() if full_runs else None
 
     def _score_similarity(
         self, model_result: Dict[str, Any], max_cycles: int
@@ -201,7 +237,13 @@ class ResultAnalyzer:
             )
 
         cache_path = self._similarity_path_for(model_name)
-        scores = collect_similarity_scores(pairs, cache_path, self._get_judge, rejudge_failed=self.rejudge_failed)
+        scores = collect_similarity_scores(
+            pairs,
+            cache_path,
+            self._get_judge,
+            prompt_template=self._judge_prompt_template(),
+            rejudge_failed=self.rejudge_failed,
+        )
         failed = sorted(key for key, score in scores.items() if score is None)
         if failed:
             self.logger.warning(
@@ -240,6 +282,10 @@ class ResultAnalyzer:
     def _judge_name(self) -> str:
         """Return the name of the configured judge."""
         return self._judge.name if self._judge is not None else self._judge_config.model
+
+    def _judge_prompt_template(self) -> str:
+        """Return the prompt template of the configured judge without creating it."""
+        return self._judge.prompt_template if self._judge is not None else self._judge_config.prompt_template
 
     @staticmethod
     def _load_results(results_path: Path) -> List[Dict[str, Any]]:
