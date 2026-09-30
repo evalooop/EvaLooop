@@ -143,6 +143,8 @@ class EvaLoopEvaluator:
         """Initialize the model result structure."""
         model_result = {
             "model": str(model),
+            # Loop budget M; needed by the analyzer to normalize the ASL metrics
+            "max_cycles": self.config.max_cycles,
             "prompt_results": []
         }
         

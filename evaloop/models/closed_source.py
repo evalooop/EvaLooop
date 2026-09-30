@@ -1,6 +1,6 @@
 import openai
 from openai import OpenAI
-from typing import Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 import logging
 import os
 import time
@@ -56,25 +56,52 @@ from .base import BaseLLM
 #             logger.error(f"OpenAI API error: {str(e)}")
 #             return f"Error generating response: {str(e)}"
 class OpenAILLM(BaseLLM):
-    """Implementation for OpenAI models like ChatGPT."""
-    
+    """Implementation for OpenAI models like ChatGPT.
+
+    Also works with any OpenAI-compatible endpoint (e.g. a local ``vllm serve`` server or a
+    hosted gateway) when ``base_url`` is set in the model config.
+    """
+
+    DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
+
     def __init__(self, model_config: Dict[str, Any]):
         super().__init__(model_config)
         self.api_key = model_config.get("api_key")
         self.model_id = model_config.get("model_id", "gpt-3.5-turbo")
         self.max_tokens = model_config.get("max_tokens", 4096)
-        
+        # None falls back to the OPENAI_BASE_URL env var, then to the official OpenAI endpoint.
+        self.base_url = model_config.get("base_url")
+        # None or "" sends the prompt as a single user message without a system message.
+        self.system_prompt = model_config.get("system_prompt", self.DEFAULT_SYSTEM_PROMPT)
+
         # Set default to greedy decoding
         self.temperature = model_config.get("temperature", 0.0)  # 0.0 = greedy decoding
         self.top_p = model_config.get("top_p", 1.0)  # 1.0 = no nucleus sampling
-        
+
         # Hardcoded retry parameters
         self.max_retries = 10  # Maximum number of retry attempts
         self.retry_delay = 3  # Retry delay in seconds
-        
+
         # Create client in init to avoid recreating for each request
-        self.client = OpenAI(api_key=self.api_key)
-    
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+    def _build_messages(self, prompt: str, include_system: bool) -> List[Dict[str, str]]:
+        """
+        Build the chat messages for a request.
+
+        Args:
+            prompt: The user prompt
+            include_system: Whether to prepend the configured system prompt (if any)
+
+        Returns:
+            List of chat messages
+        """
+        messages = []
+        if include_system and self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        return messages
+
     def _uses_system_role(self, model_id: str) -> bool:
         """
         Determine if a model supports system role messages.
@@ -126,10 +153,7 @@ class OpenAILLM(BaseLLM):
                 if use_system_role:
                     response = self.client.chat.completions.create(
                         model=model_id,
-                        messages=[
-                            {"role": "system", "content": "You are a helpful AI assistant."},
-                            {"role": "user", "content": prompt}
-                        ],
+                        messages=self._build_messages(prompt, include_system=True),
                         max_tokens=max_tokens,
                         temperature=temperature,
                         top_p=top_p,
@@ -140,19 +164,14 @@ class OpenAILLM(BaseLLM):
                     if 'o1-mini' not in model_id:
                         response = self.client.chat.completions.create(
                             model=model_id,
-                            messages=[
-                                {"role": "system", "content": "You are a helpful AI assistant."},
-                                {"role": "user", "content": prompt}
-                            ],
+                            messages=self._build_messages(prompt, include_system=True),
                             max_completion_tokens=max_tokens,
                         )
                     else:
                         print("run o1-mini without system role, this is required for o1-mini")
                         response = self.client.chat.completions.create(
                             model=model_id,
-                            messages=[
-                                {"role": "user", "content": prompt}
-                            ],
+                            messages=self._build_messages(prompt, include_system=False),
                             max_completion_tokens=max_tokens,
                         )
 
