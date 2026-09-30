@@ -4,7 +4,7 @@ Fire-based CLI interface for EvaLoop evaluation framework.
 """
 
 import os
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Sequence, Union
 from pathlib import Path
 
 import fire
@@ -15,6 +15,13 @@ import fire
 from .utils.logging_utils import setup_logging
 from .utils.validation import SystemValidator
 from .models.registry import ModelRegistry
+from evaloop.analysis.metrics import DEFAULT_METRICS
+from evaloop.analysis.similarity import (
+    DEFAULT_JUDGE_MAX_TOKENS,
+    DEFAULT_JUDGE_MODEL,
+    DEFAULT_JUDGE_PROMPT,
+    JudgeConfig,
+)
 
 
 class EvaLoopCLI:
@@ -221,45 +228,94 @@ class EvaLoopCLI:
     def analyze(
         self,
         results_path: str,
-        metrics: str = "ASL_std,ASL_base",
+        metrics: str = ",".join(DEFAULT_METRICS),
         generate_plots: bool = True,
         output_dir: Optional[str] = None,
+        max_cycles: Optional[int] = None,
+        judge_model: str = DEFAULT_JUDGE_MODEL,
+        judge_api_key: Optional[str] = None,
+        judge_api_key_file: Optional[str] = None,
+        judge_base_url: Optional[str] = None,
+        judge_max_tokens: int = DEFAULT_JUDGE_MAX_TOKENS,
+        judge_temperature: float = 0.0,
+        judge_system_prompt: Optional[str] = None,
+        judge_prompt_file: Optional[str] = None,
+        judge_delay: float = 0.0,
+        similarity_path: Optional[str] = None,
+        rejudge_failed: bool = True,
         log_level: str = "INFO",
     ) -> Dict[str, Any]:
         """
         Analyze evaluation results and generate reports.
-        
-        Computes robustness metrics and generates visualization plots
-        from evaluation results. Supports multiple metrics including
-        ASL (Average Successful Length) and pass rates.
-        
+
+        Computes the EvaLooop robustness metrics and generates visualization plots. The
+        headline metric ASL weights the quadratic loop score with the semantic similarity of
+        each task's failure boundary, judged by an LLM. Judge scores are cached in a sidecar
+        next to the results file, so reruns only query the judge for missing pairs.
+
         Args:
             results_path: Path to the evaluation results JSON file.
-            metrics: Comma-separated metrics to compute (ASL_std,ASL_base,pass_rate).
+            metrics: Comma-separated metrics to compute (ASL,ASL_pow,ASL_bias,pass@1,pass_drop).
             generate_plots: Whether to generate visualization plots.
             output_dir: Directory to save analysis (defaults to results directory).
+            max_cycles: Loop budget M of the experiment (defaults to the value recorded in the
+                results file, then the value implied by tasks flagged max_cycles_reached, then 10).
+            judge_model: Model id of the similarity judge.
+            judge_api_key: API key of the judge endpoint (defaults to OPENAI_API_KEY).
+            judge_api_key_file: File containing the judge API key (alternative to judge_api_key).
+            judge_base_url: OpenAI-compatible endpoint of the judge (e.g. a local vLLM server).
+            judge_max_tokens: Token budget of the judge answer (raise it for reasoning models).
+            judge_temperature: Sampling temperature of the judge.
+            judge_system_prompt: Optional system message for the judge (none by default).
+            judge_prompt_file: File with a custom judge prompt template using the placeholders
+                {prompt1}, {code1}, {prompt2} and {code2}.
+            judge_delay: Seconds to wait between judge calls.
+            similarity_path: Similarity sidecar to read and extend (defaults to
+                <results stem>_<judge>_similarity_scores.json next to the results file).
+            rejudge_failed: Whether to retry pairs whose cached judge call failed.
             log_level: Logging level for analysis output.
-        
+
         Usage:
             evaloop analyze --results_path "results/my_experiment_results.json"
-            evaloop analyze --results_path "results/exp.json" --metrics "ASL_std,pass_rate"
+            evaloop analyze --results_path "results/exp.json" --judge_api_key_file api.key
+            evaloop analyze --results_path "results/exp.json" --metrics "ASL_pow,pass@1"
+            evaloop analyze --results_path "results/exp.json" --judge_model "Qwen/Qwen2.5-72B-Instruct" \\
+                            --judge_base_url "http://localhost:8000/v1"
         """
         # Setup logging
         self.logger = setup_logging(level=log_level)
         self.logger.info(f"Analyzing results from: {results_path}")
 
-        # Parse metrics list
-        metrics_list = [m.strip() for m in metrics.split(",")]
+        # Parse metrics list (Fire passes "a,b" as a tuple and "a,pass@1" as a string)
+        metrics_list = _split_list_arg(metrics)
 
         # Determine output directory
         if output_dir is None:
             output_dir = str(Path(results_path).parent / "analysis")
 
         # Import analyzer
-        from .analysis.analyzer import ResultAnalyzer
+        from evaloop.analysis.analyzer import ResultAnalyzer
+
+        judge_config = JudgeConfig(
+            model=str(judge_model),
+            api_key=_resolve_api_key(judge_api_key, judge_api_key_file),
+            base_url=judge_base_url,
+            temperature=judge_temperature,
+            max_tokens=judge_max_tokens,
+            system_prompt=judge_system_prompt,
+            prompt_template=Path(judge_prompt_file).read_text() if judge_prompt_file else DEFAULT_JUDGE_PROMPT,
+            request_delay=judge_delay,
+        )
 
         # Create analyzer and run analysis
-        analyzer = ResultAnalyzer(results_path, output_dir)
+        analyzer = ResultAnalyzer(
+            results_path,
+            output_dir,
+            judge_config=judge_config,
+            similarity_path=similarity_path,
+            max_cycles=max_cycles,
+            rejudge_failed=rejudge_failed,
+        )
         analysis_results = analyzer.analyze(
             metrics=metrics_list,
             generate_plots=generate_plots,
@@ -328,6 +384,24 @@ class EvaLoopCLI:
             print(f"{status_symbol} {check}: {status['message']}")
 
         return results
+
+
+def _split_list_arg(value: Union[str, Sequence[str]]) -> List[str]:
+    """Normalize a comma-separated CLI argument that Fire may have parsed into a tuple."""
+    items = value.split(",") if isinstance(value, str) else [str(item) for item in value]
+    return [item.strip() for item in items if item.strip()]
+
+
+def _resolve_api_key(api_key: Optional[str], api_key_file: Optional[str]) -> Optional[str]:
+    """Return the API key given directly or read from a file (None falls back to the environment)."""
+    if api_key and api_key_file:
+        raise ValueError("Pass either an API key or an API key file, not both")
+    if not api_key_file:
+        return api_key
+    key = Path(api_key_file).read_text().strip()
+    if not key:
+        raise ValueError(f"API key file '{api_key_file}' is empty")
+    return key
 
 
 def main():
