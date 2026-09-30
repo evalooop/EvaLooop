@@ -132,7 +132,7 @@ class VllmLLM(BaseLLM):
         elif available_gpus == 1:
             # Single GPU, no tensor parallelism
             model_kwargs["tensor_parallel_size"] = 1
-            print(f"Using single GPU")
+            print("Using single GPU")
         
         # Set maximum model length if specified
         if self.max_model_len is not None:

@@ -8,6 +8,7 @@ matplotlib>=3.7.0
 seaborn>=0.12.0
 evalplus>=0.2.0
 accelerate>=0.26.0
-vllm>=0.2.0
 datasets>=2.0.0
 huggingface_hub>=0.20.0
+tqdm>=4.60.0
+# GPU batch inference (Linux + CUDA only): pip install -e ".[vllm]"

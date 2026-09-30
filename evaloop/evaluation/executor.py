@@ -51,7 +51,7 @@ def check_correctness_java(
 
     try:
         exec_result_compile = subprocess.run(
-            [f"javac", path],
+            ["javac", path],
             timeout=int(compile_timeout),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -62,7 +62,7 @@ def check_correctness_java(
             print("exec_result_compile", exec_result_compile)
         start = time.time()
         exec_result_run = subprocess.run(
-            [f"java", "-cp", base_path, "Main"],
+            ["java", "-cp", base_path, "Main"],
             timeout=int(timeout),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -124,7 +124,7 @@ def check_correctness_scala(
 
     try:
         exec_result_compile = subprocess.run(
-            [f"scalac", path, "-d", base_path],
+            ["scalac", path, "-d", base_path],
             timeout=int(compile_timeout),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -135,7 +135,7 @@ def check_correctness_scala(
             print("exec_result_compile", exec_result_compile)
         start = time.time()
         exec_result_run = subprocess.run(
-            [f"scala", "-cp", base_path, "Main"],
+            ["scala", "-cp", base_path, "Main"],
             timeout=int(timeout),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -488,7 +488,6 @@ def check_correctness_helper(
     extra_cleanup=None,
     cwd=None,
 ):
-    # breakpoint()
     current_dir = os.path.dirname(os.path.realpath(__file__))
     entire_string = solution + problem["test"]
 

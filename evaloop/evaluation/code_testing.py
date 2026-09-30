@@ -1,17 +1,16 @@
 # Original Copyright 2021 OpenAI under MIT License.
 # Modifications Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
-from io import UnsupportedOperation
 import itertools
 import os
 import time
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, Iterable, List, Union
+from typing import Dict, List, Union
 
 import numpy as np
 import tqdm
-from mxeval.data import HUMAN_EVAL, read_problems, stream_jsonl, write_jsonl
+from mxeval.data import HUMAN_EVAL, read_problems
 
 # Amazon modification
 # import check correctness for all languages
@@ -174,10 +173,7 @@ def evaluate_functional_correctness(
 
 if __name__ == "__main__":
     # Build a mini dataset for testing
-    from datasets import load_dataset
     from mxeval.execution import check_correctness
-    import json
-    from evalplus.data import get_mbpp_plus
 
     # ruby_problems = load_dataset("AmazonScience/mxeval", "mbxp", split="cpp", trust_remote_code=True)
     # mbpp_plus = list(get_mbpp_plus())

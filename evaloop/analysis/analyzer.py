@@ -4,16 +4,16 @@ Computes the EvaLooop robustness metrics (see :mod:`evaloop.analysis.metrics` an
 section of README.md) for every model in a results file. The headline metric ``ASL`` needs a
 semantic similarity score for each task's failure boundary; those are produced by an LLM judge
 (:mod:`evaloop.analysis.similarity`) and cached in a sidecar file next to the results.
+
+Metric computation only needs the standard library; pandas, matplotlib and seaborn are imported
+lazily for the plots.
 """
 
 import json
 import logging
+import statistics
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
-
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
 
 from evaloop.analysis import metrics as asl_metrics
 from evaloop.analysis.similarity import (
@@ -130,16 +130,14 @@ class ResultAnalyzer:
         for model_result in self.results:
             self._analyze_model(model_result, metrics, analysis_results)
 
-        # Convert results to DataFrame for summary statistics and plots
-        df = self._results_to_dataframe()
-        analysis_results["summary"] = self._generate_summary(df)
+        analysis_results["summary"] = self._generate_summary()
+
+        # Save before plotting so a plotting problem cannot lose the computed metrics
+        self._save_analysis(analysis_results)
 
         # Generate plots if requested
         if generate_plots:
-            self._generate_plots(df, analysis_results)
-
-        # Save analysis results
-        self._save_analysis(analysis_results)
+            self._generate_plots(analysis_results)
 
         return analysis_results
 
@@ -314,8 +312,10 @@ class ResultAnalyzer:
             model_result.setdefault("model", f"model_{index}")
         return results
 
-    def _results_to_dataframe(self) -> pd.DataFrame:
-        """Convert results to pandas DataFrame."""
+    def _results_to_dataframe(self):
+        """Convert results to a pandas DataFrame (used by the plots)."""
+        import pandas as pd
+
         data = []
         for model_result in self.results:
             for prompt_result in model_result["prompt_results"]:
@@ -326,32 +326,34 @@ class ResultAnalyzer:
                 })
         return pd.DataFrame(data)
 
-    def _generate_summary(self, df: pd.DataFrame) -> Dict[str, Any]:
-        """Generate summary statistics."""
-        summary = {
-            "total_models": df["model"].nunique() if "model" in df.columns else 0,
-            "total_tasks": len(df),
+    def _generate_summary(self) -> Dict[str, Any]:
+        """Generate summary statistics of the sustained loops over all models and tasks."""
+        cycles = [
+            prompt_result["successful_cycles"]
+            for model_result in self.results
+            for prompt_result in model_result["prompt_results"]
+        ]
+        return {
+            "total_models": len({model_result["model"] for model_result in self.results}),
+            "total_tasks": len(cycles),
+            "mean_cycles": statistics.fmean(cycles) if cycles else None,
+            "max_cycles_achieved": max(cycles, default=None),
+            "min_cycles_achieved": min(cycles, default=None),
+            "median_cycles": statistics.median(cycles) if cycles else None,
+            # Sample standard deviation, undefined for a single task
+            "std_cycles": statistics.stdev(cycles) if len(cycles) > 1 else None,
         }
 
-        if "successful_cycles" in df.columns:
-            summary.update({
-                "mean_cycles": df["successful_cycles"].mean(),
-                "max_cycles_achieved": df["successful_cycles"].max(),
-                "min_cycles_achieved": df["successful_cycles"].min(),
-                "median_cycles": df["successful_cycles"].median(),
-                "std_cycles": df["successful_cycles"].std(),
-            })
+    def _generate_plots(self, analysis_results: Dict[str, Any]):
+        """Generate visualization plots (requires pandas, matplotlib and seaborn)."""
+        import seaborn as sns
 
-        return summary
-
-    def _generate_plots(self, df: pd.DataFrame, analysis_results: Dict[str, Any]):
-        """Generate visualization plots."""
         sns.set_style("whitegrid")
+        df = self._results_to_dataframe()
 
-        if "successful_cycles" in df.columns:
-            self._plot_asl_comparison(analysis_results)
-            self._plot_cycle_distribution(df)
-            self._plot_success_heatmap(df)
+        self._plot_asl_comparison(analysis_results)
+        self._plot_cycle_distribution(df)
+        self._plot_success_heatmap(df)
 
         self.logger.info(f"Plots saved to {self.output_dir}")
 
@@ -360,6 +362,9 @@ class ResultAnalyzer:
         metric = next((name for name in ("ASL", "ASL_pow") if name in analysis_results), None)
         if metric is None:
             return
+
+        import matplotlib.pyplot as plt
+        import pandas as pd
 
         plt.figure(figsize=(12, 6))
 
@@ -381,8 +386,10 @@ class ResultAnalyzer:
         plt.savefig(self.output_dir / "asl_comparison.png", dpi=300, bbox_inches='tight')
         plt.close()
 
-    def _plot_cycle_distribution(self, df: pd.DataFrame):
+    def _plot_cycle_distribution(self, df):
         """Plot distribution of successful cycles."""
+        import matplotlib.pyplot as plt
+
         plt.figure(figsize=(12, 8))
 
         models = df["model"].unique()
@@ -398,10 +405,13 @@ class ResultAnalyzer:
         plt.savefig(self.output_dir / "cycle_distribution.png", dpi=300, bbox_inches='tight')
         plt.close()
 
-    def _plot_success_heatmap(self, df: pd.DataFrame):
+    def _plot_success_heatmap(self, df):
         """Plot success heatmap if we have task-level data."""
         if "task_id" not in df.columns:
             return
+
+        import matplotlib.pyplot as plt
+        import seaborn as sns
 
         # Create pivot table
         pivot_data = df.pivot_table(

@@ -7,14 +7,14 @@ import pytest
 
 from evaloop.analysis.analyzer import ResultAnalyzer
 from evaloop.analysis.similarity import SemanticSimilarityJudge
-from tests.conftest import FakeLLM
+from conftest import FakeLLM
 
 
 def test_analyze_computes_all_metrics_with_judge(results_file: Path, tmp_path: Path):
     # Boundary tasks in file order: Mbpp/1 (i=1), Mbpp/2 (i=2), Mbpp/3 (i=2).
     llm = FakeLLM(responses=["0.5", "0.8", "0.6"])
     analyzer = ResultAnalyzer(str(results_file), str(tmp_path / "out"), judge=SemanticSimilarityJudge(llm))
-    results = analyzer.analyze(generate_plots=True)
+    results = analyzer.analyze(generate_plots=False)
 
     by_metric = {metric: results[metric]["by_model"]["toy-model"] for metric in
                  ("ASL", "ASL_pow", "ASL_bias", "pass@1", "pass_drop")}
@@ -30,8 +30,19 @@ def test_analyze_computes_all_metrics_with_judge(results_file: Path, tmp_path: P
     sidecar = results_file.with_name("exp_results_fake-judge_similarity_scores.json")
     stored = {key: entry["score"] for key, entry in json.loads(sidecar.read_text()).items()}
     assert stored == {"Mbpp/1_cycle_1": 0.5, "Mbpp/2_cycle_2": 0.8, "Mbpp/3_cycle_2": 0.6}
-    for artifact in ("analysis_results.json", "analysis_summary.txt", "asl_comparison.png"):
+    for artifact in ("analysis_results.json", "analysis_summary.txt"):
         assert (tmp_path / "out" / artifact).exists()
+    assert results["summary"]["total_tasks"] == 5
+    assert results["summary"]["median_cycles"] == 2
+
+
+def test_analyze_writes_plots(results_file: Path, tmp_path: Path):
+    for module in ("pandas", "matplotlib", "seaborn"):
+        pytest.importorskip(module)
+    analyzer = ResultAnalyzer(str(results_file), str(tmp_path / "out"))
+    analyzer.analyze(metrics=["ASL_pow"], generate_plots=True)
+    for plot in ("asl_comparison.png", "cycle_distribution.png", "success_heatmap.png"):
+        assert (tmp_path / "out" / plot).exists()
 
 
 def test_analyze_reuses_sidecar_without_api_key(results_file: Path, tmp_path: Path):

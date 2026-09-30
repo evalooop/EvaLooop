@@ -1,8 +1,7 @@
 import openai
 from openai import OpenAI
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import logging
-import os
 import time
 
 from .base import BaseLLM

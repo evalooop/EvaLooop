@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        run: ruff check evaloop tests
+
+  # Deliberately lightweight: the unit tests are written to run without
+  # torch/vllm/evalplus, so PR CI stays under a minute and never downloads
+  # multi-GB model dependencies.
+  test-light:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install minimal test dependencies
+        run: pip install pytest tqdm pyyaml fire
+      - name: Run unit tests
+        run: python -m pytest
+      - name: CLI works without the heavy dependency stack
+        run: |
+          pip install -e . --no-deps
+          evaloop --version
+          evaloop --help
+          evaloop list_models
+          evaloop validate_setup --check_gpu=False --check_api_keys=False

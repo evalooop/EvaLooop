@@ -9,7 +9,7 @@ import pytest
 
 from evaloop.analysis import similarity
 from evaloop.analysis.similarity import BoundaryPair, JudgeConfig, SemanticSimilarityJudge
-from tests.conftest import FakeLLM, make_prompt_result
+from conftest import FakeLLM, make_prompt_result
 
 
 def test_default_prompt_is_unchanged():

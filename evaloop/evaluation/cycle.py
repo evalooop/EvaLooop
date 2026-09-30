@@ -66,27 +66,19 @@ class BatchEvaluationCycle:
         for prompt_input in prompts:
             task_id = prompt_input["task_id"]
             current_input = prompt_input["prompt"]
-            
-            # Extract last assertion line if available
-            try:
-                current_input_lines = current_input.splitlines()
-                assert_code = current_input_lines[-2]
-            except:
-                assert_code = ""
-            
+
             cycle_result = {
                 "cycle": cycle_number,
                 "task_id": task_id,
-                "_assert_code": assert_code,  # Store for later use
+                "_cycle_input": current_input,  # Cycle-start input, for task postprocessing
                 "_current_input": current_input  # Store current input for processing
             }
             cycle_results.append(cycle_result)
-        
+
         # Process each task in sequence using batch processing
         for task_idx, task in enumerate(self.tasks):
             task_name = task.__class__.__name__
             self.logger.info(f"Running {task_name} for {len(prompts)} prompts in batch")
-            # import ipdb; ipdb.set_trace()
             try:
                 # Collect all prompts for this task
                 task_prompts = []
@@ -115,17 +107,14 @@ class BatchEvaluationCycle:
                         if i in valid_indices and "_current_input" in cycle_result:
                             raw_output = batch_outputs[output_idx]
                             output_idx += 1
-                            
-                            # Extract the relevant part (code or summary)
-                            if task_name == "CodeGenerationTask":
-                                output = task.extract_code(raw_output)
-                            elif task_name == "CodeSummarizationTask":
-                                description = task.extract_summary(raw_output)
-                                assert_code = cycle_result.get("_assert_code", "")
-                                output = f"\"\"\"\n{description}\n{assert_code}\n\"\"\"\n"
-                            else:
-                                output = task.extract_code(raw_output)
-                            
+
+                            context = {
+                                "cycle_input": cycle_result["_cycle_input"],
+                                "task_id": cycle_result["task_id"],
+                                "cycle_number": cycle_number,
+                            }
+                            output = task.postprocess(task.extract_output(raw_output), context)
+
                             cycle_result[f"task_{task_idx + 1}_output"] = output
                             cycle_result[f"task_{task_idx + 1}_raw_output"] = raw_output
                             
@@ -148,7 +137,7 @@ class BatchEvaluationCycle:
         
         # Clean up temporary fields
         for cycle_result in cycle_results:
-            cycle_result.pop("_assert_code", None)
+            cycle_result.pop("_cycle_input", None)
             cycle_result.pop("_current_input", None)
         
         return cycle_results
@@ -168,8 +157,8 @@ class BatchEvaluationCycle:
         
         # For each prompt, process all tasks and collect results
         for i, prompt_input in tqdm(enumerate(prompts)):
-            print(f"processing {i}th of {len(prompts)}")
-            
+            self.logger.info(f"Processing prompt {i + 1} of {len(prompts)}")
+
             cycle_result = self._process_single_prompt(prompt_input, cycle_number)
             cycle_results.append(cycle_result)
         
@@ -193,21 +182,13 @@ class BatchEvaluationCycle:
             "cycle": cycle_number,
             "task_id": task_id
         }
-        
-        # Extract last assertion line if available
-        try:
-            current_input_lines = current_input.splitlines()
-            assert_code = current_input_lines[-2]
-        except:
-            assert_code = ""
-        
-        # Get problem details, but we already checked this when create the dataset
-        # problem = self.problems.get(task_id)
-        # if not problem:
-        #     self.logger.error(f"Problem {task_id} not found in MBPP dataset")
-        #     cycle_results["error"] = f"Problem {task_id} not found"
-        #     return cycle_results
-        
+
+        context = {
+            "cycle_input": current_input,
+            "task_id": task_id,
+            "cycle_number": cycle_number,
+        }
+
         # Run each task in sequence
         for i, task in enumerate(self.tasks):
             task_name = task.__class__.__name__
@@ -219,16 +200,9 @@ class BatchEvaluationCycle:
                 
                 # Get the output from the model
                 raw_output = self.model.generate(prompt)
-                
-                # Extract the relevant part (code or summary)
-                if task_name == "CodeGenerationTask":
-                    output = task.extract_code(raw_output)
-                elif task_name == "CodeSummarizationTask":
-                    description = task.extract_summary(raw_output)
-                    output = f"\"\"\"\n{description}\n{assert_code}\n\"\"\"\n"
-                else:
-                    output = task.extract_code(raw_output)
-                
+
+                output = task.postprocess(task.extract_output(raw_output), context)
+
                 cycle_results[f"task_{i+1}_output"] = output
                 cycle_results[f"task_{i+1}_raw_output"] = raw_output
                 

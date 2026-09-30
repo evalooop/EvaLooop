@@ -33,7 +33,6 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from evaloop.models.base import BaseLLM
-from evaloop.models.closed_source import OpenAILLM
 
 logger = logging.getLogger(__name__)
 
@@ -306,8 +305,12 @@ class SemanticSimilarityJudge:
         Returns:
             The judge.
         """
+        model_config = config.to_model_config()  # Validate credentials before importing openai.
+        # Imported here so that metrics, caching and the CLI work without the openai package.
+        from evaloop.models.closed_source import OpenAILLM
+
         return cls(
-            OpenAILLM(config.to_model_config()),
+            OpenAILLM(model_config),
             name=config.model,
             prompt_template=config.prompt_template,
             request_delay=config.request_delay,
